@@ -33,7 +33,7 @@ def scrape_webpage(url):
 
 def analyze_with_chatgpt(content):
     prompt = f"""
-    Based on the following website content, generate questions with multiple-choice options to help categorize visitors based on their interests or industry. 
+    Based on the following website content, generate 3 questions with multiple-choice options to help categorize visitors based on their interests or industry. 
 
     Content:
     {content}
