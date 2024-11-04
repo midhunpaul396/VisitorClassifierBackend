@@ -8,11 +8,20 @@ from dotenv import load_dotenv
 import json
 import validators
 import logging
+import openai
 
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
+
+# Set up CORS with specific options
+CORS(app, resources={r"/*": {
+    "origins": "http://localhost:3000",
+    "methods": ["POST", "OPTIONS"],
+    "allow_headers": ["Content-Type", "Authorization"]
+}})
+
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -71,18 +80,59 @@ def analyze_with_llama(content):
     except Exception as e:
         logging.error(f"Llama API error: {e}")
         return {"error": "Failed to generate questions"}
-
-
-def categorize_response(user_response):
-    prompt = f"""
-    Analyze this response and categorize the user: {user_response}
-    """
     
+
+def analyze_with_chatgpt(content):
+    prompt = f"""
+    Based on the following website content, generate 3 questions with multiple-choice options to help categorize visitors based on their interests or industry. 
+
+    Content:
+    {content}
+
+    Format the response in JSON as follows:
+    {{
+        "questions": [
+            {{
+                "question": "Your question?",
+                "options": ["Option 1", "Option 2", "Option 3"]
+            }}
+        ]
+    }}
+    """
     try:
-        response_text = llm.invoke(prompt)  # Use invoke instead of predict
-        return response_text.strip()  # Assuming Llama returns a string response
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=300
+        )
+        response_text = response.choices[0].message['content'].strip()
+        return json.loads(response_text)  # Parse directly to JSON
+    except Exception as e:
+        print(f"OpenAI API error: {e}")
+        return {"error": "Failed to generate questions"}
+
+# Function for categorizing responses with Ollama
+def categorize_response_with_llama(user_response):
+    prompt = f"Analyze this response and categorize the user: {user_response}"
+    try:
+        response_text = llm.invoke(prompt)
+        return response_text.strip()
     except Exception as e:
         logging.error(f"Llama API error: {e}")
+        return {"error": "Failed to categorize response"}
+
+# Function for categorizing responses with OpenAI
+def categorize_response_with_chatgpt(user_response):
+    messages = [{"role": "user", "content": f"Analyze this response and categorize the user: {user_response}"}]
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=messages,
+            max_tokens=50
+        )
+        return response['choices'][0]['message']['content'].strip()
+    except Exception as e:
+        logging.error(f"OpenAI API error: {e}")
         return {"error": "Failed to categorize response"}
 
 def is_valid_url(url):
@@ -90,6 +140,7 @@ def is_valid_url(url):
 
 @app.route('/generate-questions', methods=["POST"])
 def generate_questions():
+    logging.info(f"Received request: {request.json}")  # Log the incoming request
     url = request.json.get('url')
     if not is_valid_url(url):
         return jsonify({"error": "Invalid URL format"}), 400
@@ -102,10 +153,30 @@ def generate_questions():
         return jsonify(questions_data), 500
     return jsonify({"questions": questions_data["questions"]})
 
-@app.route('/categorize', methods=["POST"])
-def categorize():
+@app.route('/generate-openai-questions', methods=["POST"])
+def generate_open_ai_questions():
+    url = request.json.get('url')
+    scraped_content = scrape_webpage(url)
+    if "error" in scraped_content:
+        return jsonify(scraped_content), 500
+    questions_data = analyze_with_chatgpt(scraped_content)
+    if "error" in questions_data:
+        return jsonify(questions_data), 500
+    # Return the inner questions array directly
+    return jsonify({"questions": questions_data["questions"]})
+
+# Route for categorizing user response with Ollama
+@app.route('/categorize-ollama', methods=["POST"])
+def categorize_ollama():
     user_response = request.json.get('user_response')
-    category = categorize_response(user_response)
+    category = categorize_response_with_llama(user_response)
+    return jsonify({"category": category})
+
+# Route for categorizing user response with OpenAI
+@app.route('/categorize-openai', methods=["POST"])
+def categorize_openai():
+    user_response = request.json.get('user_response')
+    category = categorize_response_with_chatgpt(user_response)
     return jsonify({"category": category})
 
 if __name__ == '__main__':
